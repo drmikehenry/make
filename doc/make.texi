@@ -1113,6 +1113,140 @@ handling is modified slightly to conform to POSIX.2: first, whitespace
 preceding a backslash is not removed and second, consecutive
 backslash/newlines are not condensed.
 
+Inserting a backslash/newline to split a non-recipe line always
+results in the logical line containing a single space character at
+location of the split.  Where this is undesired, additional work is
+required.
+
+The simplest technique is to split lines with the three-character
+sequence dollar sign/backslash/newline instead of just
+backslash/newline.  For example:
+
+@example
+x := one$\
+     word
+@end example
+
+After backslash-newline conversion, this is equivalent to:
+
+@example
+x := one$ word
+@end example
+
+A dollar sign followed by a character other than a dollar sign,
+open-parenthesis or open-brace treats that single character as the
+variable name (@pxref{Reference,Basics of Variable References}).  In
+the example above, the variable name following the dollar sign
+consists of a single space character.  By default, that variable does
+not exist, so the reference evaluates to the empty string, making the
+line equivalent to:
+
+@example
+x := oneword
+@end example
+
+This technique is compatible with very old versions of GNU Make.  It
+works transparently in most places outside of recipe lines; however,
+when used in the bodies of recursively expanded variable assignments,
+the dollar sign/space pairs remain in the variable body until the
+variable is expanded, at which time they evaluate to the empty string.
+This works well for user-defined functions such as the one below:
+
+@example
+# Replace $1 with $2 in $3 until no more changes are made.
+resubst = $\
+  $(if $(findstring $1,$3),$\
+       $(call resubst,$\
+              $1,$\
+              $2,$\
+              $(subst $1,$2,$3)),$\
+       $3)
+@end example
+
+After backslash/newline processing, the dollar sign/space pairs remain
+in the function body until it is called, at which point they evaporate
+to the empty string.  This behavior is not a significant restriction
+in most cases because the underlying raw @samp{$(value)} of the
+variable is never inspected (@pxref{Value Function}).  For cases where
+leaving the dollar sign/space pairs in the value is not acceptable,
+the below alternative may be preferable.
+
+For GNU Make 3.80 and later (needed for @samp{$(value)} and
+@samp{$(eval)}), the raw value of a recursively expanded variable may
+be post-processed to remove line breaks defined by newline/whitespace.
+This technique doesn't require any end-of-line punctuation for
+splitting lines, so it provides the cleanest look for user-defined
+functions.  First, define the variable @code{empty} to be the empty
+string and the variables @code{space} and @code{newline} to contain a
+literal space and newline, respectively:
+
+@example
+empty :=
+
+space := $(empty) $(empty)
+
+define newline
+
+
+endef
+@end example
+
+Next, use @samp{$(eval)} to programmatically create a recursively
+expanded variable with a given value:
+
+@example
+# Define recursively expanded variable $1 with value $2.
+defineVar = $(eval define $1$(newline)$2$(newline)endef)
+@end example
+
+These, along with the resubst function introduced earlier, are
+sufficient to define functions two-dimensionally with arbitrary
+newlines and indentation.  The general method comprises three steps:
+
+@enumerate
+@item Prepend a newline to the function body;
+@item Repeatedly replace newline-space pairs with newlines;
+@item Remove all newlines.
+@end enumerate
+
+The function @code{def} removes the newline/whitespace line
+continuations from the @samp{$(value)} of a recursively expanded
+variable defined via @code{define}/@code{endef}:
+
+@example
+# $1 - name of function to redefine as a normalized single-line function.
+def = $\
+  $(call defineVar,$\
+         $1,$\
+         $(subst $(newline),$\
+                 $(empty),$\
+                 $(call resubst,$\
+                        $(newline)$(space),$\
+                        $(newline),$\
+                        $(newline)$(value $1))))
+@end example
+
+Now @code{def} may be used to post-process a recursively expanded
+variable.  For example:
+
+@example
+# Convert string $1 into C-style macro by replacing -, ., and /
+# characters with underscores.
+define toMacro
+  $(subst -,_,
+  $(subst .,_,
+  $(subst /,_,$1)))
+endef
+$(call def,toMacro)
+@end example
+
+After laundering with @code{def}, the newlines and indentation have
+been stripped and the function body has been redefined to:
+
+@example
+toMacro = $(subst -,_,$(subst .,_,$(subst /,_,$1)))
+@end example
+
 @node Makefile Names, Include, Makefile Contents, Makefiles
 @section What Name to Give Your Makefile
 @cindex makefile name
